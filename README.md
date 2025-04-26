@@ -14,8 +14,8 @@ vite.config.ts
 ```typescript
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import svgComponent from 'unplugin-svg-vue-component'
-import svgComponentBatch from 'vite-plugin-svg-vue-component-batch/vite'
+import svgComponent from 'unplugin-svg-vue-component/vite'
+import svgComponentBatch from 'vite-plugin-svg-vue-component-batch'
 import { resolve } from 'path'
 
 const dirname = import.meta.dirname;

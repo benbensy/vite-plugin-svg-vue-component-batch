@@ -11,8 +11,9 @@ interface Options {
 
 export default function svgVueComponentBatchPlugin(options: Options): Plugin {
   const virtualModuleId = "virtual:svg-components";
-  const { dir } = options;
   const resolvedVirtualId = "\0" + virtualModuleId;
+  const { dir } = options;
+
   let root = process.cwd();
   const pluginRoot = dirname(fileURLToPath(import.meta.url));
   let files: string[] = [];
@@ -29,8 +30,9 @@ export default function svgVueComponentBatchPlugin(options: Options): Plugin {
       const svgDir = resolve(root, dir);
       files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
 
-      const typeMappings: string[] = [];
+      this.addWatchFile(svgDir);
 
+      const typeMappings: string[] = [];
       for (const file of files) {
         const name = normalizeName(file);
         typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
@@ -40,7 +42,64 @@ export default function svgVueComponentBatchPlugin(options: Options): Plugin {
       await generateDTS(virtualModuleId, dtsPath, typeMappings);
     },
 
-    async resolveId(id) {
+    async handleHotUpdate({ file, server }) {
+      if (!file.endsWith(".svg")) return;
+
+      const svgDir = resolve(root, dir);
+      if (!file.startsWith(svgDir)) return;
+
+      files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
+
+      const typeMappings: string[] = [];
+      for (const file of files) {
+        const name = normalizeName(file);
+        typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
+      }
+      const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
+      await generateDTS(virtualModuleId, dtsPath, typeMappings);
+
+      const mod = server.moduleGraph.getModuleById(resolvedVirtualId);
+      if (mod) {
+        server.moduleGraph.invalidateModule(mod);
+        server.ws.send({ type: "full-reload" });
+      }
+    },
+
+    configureServer(server) {
+      const svgDir = resolve(root, dir);
+    
+      const updateVirtualModule = async () => {
+        files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
+    
+        const typeMappings: string[] = [];
+        for (const file of files) {
+          const name = normalizeName(file);
+          typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
+        }
+        const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
+        await generateDTS(virtualModuleId, dtsPath, typeMappings);
+    
+        const mod = server.moduleGraph.getModuleById(resolvedVirtualId);
+        if (mod) {
+          server.moduleGraph.invalidateModule(mod);
+          server.ws.send({ type: "full-reload" });
+        }
+      };
+    
+      server.watcher.on("add", async (file) => {
+        if (file.endsWith(".svg") && file.startsWith(svgDir)) {
+          await updateVirtualModule();
+        }
+      });
+    
+      server.watcher.on("unlink", async (file) => {
+        if (file.endsWith(".svg") && file.startsWith(svgDir)) {
+          await updateVirtualModule();
+        }
+      });
+    },
+
+    resolveId(id) {
       if (id === virtualModuleId) {
         return resolvedVirtualId;
       }
@@ -73,7 +132,7 @@ ${imports.join("\n")}
 export default {
   ${mappings.join(",\n  ")}
 }
-      `;
+`;
     },
   };
 }
