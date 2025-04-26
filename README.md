@@ -14,7 +14,7 @@ vite.config.ts
 ```typescript
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import svgComponent from 'unplugin-svg-vue-component/vite'
+import svgComponent from 'unplugin-svg-vue-component'
 import svgComponentBatch from 'vite-plugin-svg-vue-component-batch/vite'
 import { resolve } from 'path'
 
