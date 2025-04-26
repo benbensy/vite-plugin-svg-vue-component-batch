@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-svg-vue-component-batch",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Vite plugin for importing svg vue components from a directory.",
   "type": "module",
   "exports": {
@@ -12,6 +12,7 @@
       "types": "./dist/svg-components.d.ts"
     }
   },
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
@@ -29,6 +30,14 @@
   "author": "indusy",
   "license": "MIT",
   "packageManager": "pnpm@10.7.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benbensy/vite-plugin-svg-vue-component-batch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/benbensy/vite-plugin-svg-vue-component-batch/issues"
+  },
+  "homepage": "https://github.com/benbensy/vite-plugin-svg-vue-component-batch#readme",
   "dependencies": {
     "fast-glob": "^3.2.12",
     "fs-extra": "^11.0.0",
