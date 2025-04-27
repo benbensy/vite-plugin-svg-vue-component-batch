@@ -6,17 +6,27 @@ import { slugify } from "transliteration";
 import fs from "fs-extra";
 
 interface Options {
-  dir: string;
+  dir: string | string[];
 }
 
 export default function svgVueComponentBatchPlugin(options: Options): Plugin {
   const virtualModuleId = "virtual:svg-components";
   const resolvedVirtualId = "\0" + virtualModuleId;
-  const { dir } = options;
+  const dirs = Array.isArray(options.dir) ? options.dir : [options.dir];
 
   let root = process.cwd();
   const pluginRoot = dirname(fileURLToPath(import.meta.url));
   let files: string[] = [];
+
+  const getAllSvgFiles = async () => {
+    const allFiles: string[] = [];
+    for (const dir of dirs) {
+      const svgDir = resolve(root, dir);
+      const found = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
+      allFiles.push(...found.map(f => resolve(svgDir, f)));
+    }
+    return allFiles;
+  };
 
   return {
     name: "vite-plugin-svg-vue-component-batch",
@@ -27,36 +37,23 @@ export default function svgVueComponentBatchPlugin(options: Options): Plugin {
     },
 
     async buildStart() {
-      const svgDir = resolve(root, dir);
-      files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
+      files = await getAllSvgFiles();
 
-      this.addWatchFile(svgDir);
-
-      const typeMappings: string[] = [];
-      for (const file of files) {
-        const name = normalizeName(file);
-        typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
+      for (const dir of dirs) {
+        this.addWatchFile(resolve(root, dir));
       }
 
-      const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
-      await generateDTS(virtualModuleId, dtsPath, typeMappings);
+      await generateDTS();
     },
 
     async handleHotUpdate({ file, server }) {
       if (!file.endsWith(".svg")) return;
 
-      const svgDir = resolve(root, dir);
-      if (!file.startsWith(svgDir)) return;
+      const isUnderWatchedDir = dirs.some(dir => file.startsWith(resolve(root, dir)));
+      if (!isUnderWatchedDir) return;
 
-      files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
-
-      const typeMappings: string[] = [];
-      for (const file of files) {
-        const name = normalizeName(file);
-        typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
-      }
-      const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
-      await generateDTS(virtualModuleId, dtsPath, typeMappings);
+      files = await getAllSvgFiles();
+      await generateDTS();
 
       const mod = server.moduleGraph.getModuleById(resolvedVirtualId);
       if (mod) {
@@ -66,37 +63,32 @@ export default function svgVueComponentBatchPlugin(options: Options): Plugin {
     },
 
     configureServer(server) {
-      const svgDir = resolve(root, dir);
-    
       const updateVirtualModule = async () => {
-        files = await fg("**/*.svg", { cwd: svgDir, onlyFiles: true });
-    
-        const typeMappings: string[] = [];
-        for (const file of files) {
-          const name = normalizeName(file);
-          typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
-        }
-        const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
-        await generateDTS(virtualModuleId, dtsPath, typeMappings);
-    
+        files = await getAllSvgFiles();
+        await generateDTS();
+
         const mod = server.moduleGraph.getModuleById(resolvedVirtualId);
         if (mod) {
           server.moduleGraph.invalidateModule(mod);
           server.ws.send({ type: "full-reload" });
         }
       };
-    
-      server.watcher.on("add", async (file) => {
-        if (file.endsWith(".svg") && file.startsWith(svgDir)) {
-          await updateVirtualModule();
-        }
-      });
-    
-      server.watcher.on("unlink", async (file) => {
-        if (file.endsWith(".svg") && file.startsWith(svgDir)) {
-          await updateVirtualModule();
-        }
-      });
+
+      for (const dir of dirs) {
+        const svgDir = resolve(root, dir);
+
+        server.watcher.on("add", async (file) => {
+          if (file.endsWith(".svg") && file.startsWith(svgDir)) {
+            await updateVirtualModule();
+          }
+        });
+
+        server.watcher.on("unlink", async (file) => {
+          if (file.endsWith(".svg") && file.startsWith(svgDir)) {
+            await updateVirtualModule();
+          }
+        });
+      }
     },
 
     resolveId(id) {
@@ -108,15 +100,13 @@ export default function svgVueComponentBatchPlugin(options: Options): Plugin {
     async load(id) {
       if (id !== resolvedVirtualId) return;
 
-      const svgDir = resolve(root, dir);
-
       const imports: string[] = [];
       const mappings: string[] = [];
 
       for (const file of files) {
         const name = normalizeName(file);
         const importPath =
-          "/" + relative(root, resolve(svgDir, file)).replace(/\\/g, "/");
+          "/" + relative(root, file).replace(/\\/g, "/");
         const varName = `Icon_${name}`;
 
         imports.push(
@@ -135,9 +125,31 @@ export default {
 `;
     },
   };
+
+  async function generateDTS() {
+    const typeMappings: string[] = [];
+    for (const file of files) {
+      const name = normalizeName(file);
+      typeMappings.push(`'${name}': DefineComponent<SVGAttributes>;`);
+    }
+
+    const dtsPath = resolve(pluginRoot, "svg-components.d.ts");
+    const content = `// Generated by vite-plugin-svg-vue-component-batch
+declare module '${virtualModuleId}' {
+  import type { DefineComponent, SVGAttributes } from 'vue';
+  
+  const icons: {
+  ${typeMappings.join("\n  ")}
+}
+  export default icons;
+}
+`;
+    await fs.ensureFile(dtsPath);
+    await fs.writeFile(dtsPath, content, "utf-8");
+  }
 }
 
-function normalizeName(file: string) {
+function normalizeName(filePath: string) {
   slugify.config({
     lowercase: true,
     separator: "_",
@@ -145,22 +157,6 @@ function normalizeName(file: string) {
     unknown: "_",
   });
 
-  const fileName = file.replace(/\.svg$/, "");
+  const fileName = filePath.split(/[\\/]/).slice(-1)[0].replace(/\.svg$/, "");
   return slugify(fileName);
-}
-
-async function generateDTS(moduleId: string, path: string, types: string[]) {
-  const content = `// Generated by vite-plugin-svg-vue-component-batch
-declare module '${moduleId}' {
-  import type { DefineComponent, SVGAttributes } from 'vue';
-  
-  const icons: {
-  ${types.join("\n  ")}
-}
-  export default icons;
-}
-`;
-
-  await fs.ensureFile(path);
-  await fs.writeFile(path, content, "utf-8");
 }
